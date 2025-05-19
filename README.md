@@ -27,8 +27,21 @@ PE(p,2i+1) = cos(p / 10000^(2i/d_model))
 We add this to token embeddings:  
 `zₜ = E(xₜ) + PE(t)`
 
-*(Implementation code remains unchanged)*
+```python
+class PositionEncoding(nn.Module):
+    def __init__(self, d_model=2, max_len=6):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)  # Tensor of zeros for position encodings
+        position = torch.arange(max_len).float().unsqueeze(1)  # Positions [0..L-1]
+        embedding_index = torch.arange(0, d_model, 2).float()  # Even indices
+        div_term = 1 / (10000.0 ** (embedding_index / d_model))  # Scale term
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer("pe", pe)
 
+    def forward(self, word_embeddings):
+        return word_embeddings + self.pe[: word_embeddings.size(0), :]
+```
 ---
 
 ## 3. Scaled Dot-Product Self-Attention
@@ -53,7 +66,28 @@ We add this to token embeddings:
 5. **Weighted Sum**  
    Attention(Z) = A·V
 
-*(Implementation code remains unchanged)*
+```python
+class Attention(nn.Module):
+    def __init__(self, d_model=2):
+        super().__init__()
+        self.W_q = nn.Linear(d_model, d_model, bias=False)
+        self.W_k = nn.Linear(d_model, d_model, bias=False)
+        self.W_v = nn.Linear(d_model, d_model, bias=False)
+
+    def forward(self, q_emb, k_emb, v_emb, mask=None):
+        Q = self.W_q(q_emb)
+        K = self.W_k(k_emb)
+        V = self.W_v(v_emb)
+        
+        sims = Q @ K.transpose(0, 1)
+        scaled_sims = sims / (K.size(-1) ** 0.5)
+        
+        if mask is not None:
+            scaled_sims = scaled_sims.masked_fill(mask, -1e9)
+            
+        attn = F.softmax(scaled_sims, dim=-1)
+        return attn @ V
+```
 
 ---
 
@@ -73,7 +107,33 @@ We add this to token embeddings:
 4. **Output Layer**  
    Y = R·W_out + b_out  (→ vocabulary logits)
 
-*(Implementation code remains unchanged)*
+```python
+class DecoderTransformer(L.LightningModule):
+    def __init__(self, num_tokens=4, d_model=2, max_len=6):
+        super().__init__()
+        self.embed = nn.Embedding(num_tokens, d_model)
+        self.pe = PositionEncoding(d_model, max_len)
+        self.attn = Attention(d_model)
+        self.out = nn.Linear(d_model, num_tokens)
+        self.loss_fn = nn.CrossEntropyLoss()
+
+    def forward(self, tokens):
+        # Shape: (seq_len, d_model)
+        embeds = self.pe(self.embed(tokens))
+        
+        # Causal mask
+        mask = ~torch.tril(torch.ones(len(tokens), len(tokens))).bool()
+        
+        # Self-attention
+        attn_out = self.attn(embeds, embeds, embeds, mask)
+        residual = embeds + attn_out
+        return self.out(residual)
+
+    def training_step(self, batch):
+        x, y = batch
+        preds = self(x)
+        return self.loss_fn(preds.view(-1, preds.size(-1)), y.view(-1))
+```
 
 ---
 
@@ -99,15 +159,18 @@ Adam(lr=0.1)
    - Select argmax for next token
    - Break on `<EOS>`
 
-*(Implementation code remains unchanged)*
-
+```python
+def generate(model, prompt, max_len=10):
+    tokens = [token_to_id[p] for p in prompt.split()]
+    while len(tokens) < max_len:
+        logits = model(torch.tensor(tokens))
+        next_id = logits[-1].argmax().item()
+        if next_id == EOS_ID: break
+        tokens.append(next_id)
+    return ' '.join([id_to_token[t] for t in tokens])
+```
 ---
 
 ## References
 
 Vaswani et al., [Attention Is All You Need](https://arxiv.org/abs/1706.03762) (2017)
-For proper math rendering:  
-If you want to view this with proper LaTeX formatting, consider:
-1. Using a browser extension like [MathJax for GitHub](https://github.com/orsharir/github-mathjax)
-2. Viewing the README in a Markdown editor that supports LaTeX (Typora, Obsidian, etc.)
-3. Converting to PDF with LaTeX support using pandoc
