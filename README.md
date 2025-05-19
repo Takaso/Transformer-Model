@@ -1,6 +1,3 @@
-Here's the formatted and corrected README.md:
-
-```markdown
 # Transformer Model: Answer to Messages on Discord
 
 Now I'll leave an explanation on the math behind the code, puhuhu...
@@ -212,7 +209,6 @@ def generate(model, prompt, max_length=6) -> str:
     return ' '.join([id_to_token[i.item()] for i in predicted_ids if i != token_to_id['<EOS>']])
 ```
 
----
 
 ## References
 
